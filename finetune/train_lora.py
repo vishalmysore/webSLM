@@ -35,7 +35,6 @@ releases; if you bump versions and hit an argument error, check the SFTConfig/SF
 signature for your installed trl (this script handles the tokenizer/processing_class rename).
 """
 import argparse
-import inspect
 import sys
 
 
@@ -106,7 +105,7 @@ def main():
                         "gate_proj", "up_proj", "down_proj"],
     )
 
-    sft_kwargs = dict(
+    sft_cfg = SFTConfig(
         output_dir=args.adapter_out,
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch_size,
@@ -114,19 +113,11 @@ def main():
         learning_rate=args.lr,
         logging_steps=5,
         save_strategy="epoch",
-        dataset_text_field="text",
+                dataset_text_field="text",
         packing=False,
         fp16=True,
         report_to="none",
     )
-    if inspect.signature(SFTConfig).parameters.get("max_seq_length") is not None:
-        sft_kwargs["max_seq_length"] = args.max_seq_len
-    elif inspect.signature(SFTConfig).parameters.get("max_length") is not None:
-        sft_kwargs["max_length"] = args.max_seq_len
-    else:
-        print("Warning: SFTConfig does not accept max_seq_length or max_length; sequence length will use the default.")
-
-    sft_cfg = SFTConfig(**sft_kwargs)
 
     # TRL renamed the `tokenizer` kwarg to `processing_class`; support both.
     try:
