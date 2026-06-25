@@ -118,6 +118,7 @@ const engine = await webllm.CreateMLCEngine("webslm-code-1.5b", { appConfig });
 | `build.sh` | local `convert_weight` → `gen_config` → `compile --device webgpu` |
 | `finetune/` | train a domain base on your data (datasets + LoRA script + clone-and-run Colab) |
 | `merge_lora.py` | merge a separately-trained LoRA adapter → a checkpoint the pipeline builds |
+| `normalize_config.py` | make newer-transformers `config.json` readable by the pinned mlc-llm v0.19.0 |
 | `colab/` | interactive build notebook + notes |
 | `demo/index.html` | minimal WebLLM browser page to load + test a compiled SLM |
 | `model-card/README.md` | Hugging Face model-card template for a published SLM |
@@ -131,6 +132,10 @@ const engine = await webllm.CreateMLCEngine("webslm-code-1.5b", { appConfig });
 - **Small models only.** 0.5–2B comfortable in-browser; ~3–4B is the ceiling; 7B+ no.
 - **Version pin:** the `.wasm` is tied to the runtime — load it with the matching `@mlc-ai/web-llm`
   (v0.19.0 → `0.2.79`), or you get a "model lib version" error.
+- **Newer-transformers configs:** models saved by recent transformers nest the RoPE base in a
+  `rope_parameters` dict instead of a top-level `rope_theta`, which mlc v0.19.0 rejects
+  (`QWen2Config ... missing ... 'rope_theta'`). The build runs [`normalize_config.py`](normalize_config.py)
+  to fix this automatically — no need to re-train or re-export your model.
 - **Gated bases** (Llama, Gemma) need an `HF_TOKEN` with access at download time.
 
 ## License

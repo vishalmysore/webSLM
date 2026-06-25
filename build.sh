@@ -48,6 +48,9 @@ else
   hf download "$MODEL_HF" --local-dir "$HF_DIR"      # huggingface_hub 1.x CLI
 fi
 
+echo "==> 1b. Normalize config for mlc-llm v0.19.0 (newer-transformers compat)"
+python "$(dirname "$0")/normalize_config.py" "$HF_DIR"
+
 echo "==> 2. convert_weight  (HF -> MLC quantized params)"
 mlc_llm convert_weight "$HF_DIR" \
   --quantization "$QUANT" \

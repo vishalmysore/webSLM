@@ -183,6 +183,8 @@ jobs:
           cp "$TVM_HOME"/web/dist/wasm/*.bc "$TVM_HOME/build/"
           OUT=dist-model; W="$OUT/$NAME-MLC"; L="$OUT/libs"
           mkdir -p "$W" "$L"
+          # Make newer-transformers configs (rope_parameters / dtype) readable by mlc v0.19.0.
+          python normalize_config.py "hf/$NAME"
           mlc_llm convert_weight "hf/$NAME" --quantization "${{ inputs.quant }}" \
             --model-type "$ARCH" -o "$W"
           mlc_llm gen_config "hf/$NAME" --quantization "${{ inputs.quant }}" \
