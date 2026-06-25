@@ -1,0 +1,232 @@
+name: Build domain SLM (WebGPU/WebLLM)
+
+# Compile a domain-specific Small Language Model into a WebGPU model library
+# (.wasm) + quantized weights that run entirely in the browser via WebLLM.
+#
+# MODEL-AGNOSTIC: pick a domain preset, or pick "Custom" and pass any MLC-LLM-
+# supported base (incl. your OWN fine-tuned/merged checkpoint on HF — see
+# merge_lora.py). There is NO model-definition patching and NO latent loop here:
+# this builds an ordinary chat SLM, just faster + private + offline in the browser.
+#
+# Build method: mlc-llm v0.19.0 built FROM SOURCE (the nightly wheels are broken by
+# the in-progress apache-tvm-ffi migration). CPU only — `mlc_llm compile --device
+# webgpu` is codegen (emcc), no GPU needed. ~45 min/model.
+
+on:
+  workflow_dispatch:
+    inputs:
+      domain:
+        description: "Domain preset (or Custom)"
+        type: choice
+        default: "Code (Qwen2.5-Coder-1.5B)"
+        options:
+          - "Code (Qwen2.5-Coder-1.5B)"
+          - "Math (Qwen2.5-Math-1.5B)"
+          - "General base (Qwen2.5-0.5B)"
+          - "General base (Llama-3.2-1B)"
+          - "General base (Gemma-2-2B)"
+          - "General base (Phi-3.5-mini)"
+          - "Custom"
+      quant:
+        description: "Quantization (q4f16_1 = small; q4f32_1 if you hit NaNs / f16 overflow)"
+        default: "q4f16_1"
+      # ── Custom path (used only when domain == 'Custom') ──────────────────────
+      custom_model_hf:
+        description: "[Custom] Base model HF id OR your fine-tuned/merged repo"
+        default: ""
+      custom_arch:
+        description: "[Custom] mlc arch: qwen2 | llama | gemma2 | phi3 | mistral"
+        default: "qwen2"
+      custom_conv:
+        description: "[Custom] conv template: qwen2 | llama-3 | gemma_instruction | phi-3 | mistral_default"
+        default: "qwen2"
+      custom_name:
+        description: "[Custom] output name (e.g. WebSLM-Medical-0.5B)"
+        default: "WebSLM-Custom"
+      upload_hf:
+        description: "Upload weights + wasm to HF (needs HF_TOKEN secret + HF_NAMESPACE var, e.g. yourname)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # needed to create the Release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      # ── Resolve the domain preset (or the Custom inputs) into env vars ────────
+      - name: Resolve model preset
+        run: |
+          set -e
+          case "${{ inputs.domain }}" in
+            "Code (Qwen2.5-Coder-1.5B)")
+              M="Qwen/Qwen2.5-Coder-1.5B-Instruct"; A="qwen2"; C="qwen2"; N="WebSLM-Code-1.5B";;
+            "Math (Qwen2.5-Math-1.5B)")
+              M="Qwen/Qwen2.5-Math-1.5B-Instruct"; A="qwen2"; C="qwen2"; N="WebSLM-Math-1.5B";;
+            "General base (Qwen2.5-0.5B)")
+              M="Qwen/Qwen2.5-0.5B-Instruct"; A="qwen2"; C="qwen2"; N="WebSLM-Qwen2.5-0.5B";;
+            "General base (Llama-3.2-1B)")
+              M="meta-llama/Llama-3.2-1B-Instruct"; A="llama"; C="llama-3"; N="WebSLM-Llama3.2-1B";;
+            "General base (Gemma-2-2B)")
+              M="google/gemma-2-2b-it"; A="gemma2"; C="gemma_instruction"; N="WebSLM-Gemma2-2B";;
+            "General base (Phi-3.5-mini)")
+              M="microsoft/Phi-3.5-mini-instruct"; A="phi3"; C="phi-3"; N="WebSLM-Phi3.5-mini";;
+            "Custom")
+              M="${{ inputs.custom_model_hf }}"; A="${{ inputs.custom_arch }}"
+              C="${{ inputs.custom_conv }}"; N="${{ inputs.custom_name }}"
+              if [ -z "$M" ]; then
+                echo "::error::Custom domain selected but custom_model_hf is empty."; exit 1
+              fi;;
+            *) echo "::error::Unknown domain '${{ inputs.domain }}'"; exit 1;;
+          esac
+          echo "MODEL_HF=$M" >> "$GITHUB_ENV"
+          echo "ARCH=$A"     >> "$GITHUB_ENV"
+          echo "CONV=$C"     >> "$GITHUB_ENV"
+          echo "NAME=$N"     >> "$GITHUB_ENV"
+          echo "Building $N  <-  $M  (arch=$A conv=$C quant=${{ inputs.quant }})"
+
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build build-essential git \
+            llvm-dev libedit-dev libxml2-dev zlib1g-dev libssl-dev
+          # TVM static-links LLVM incl. Polly; llvm-dev doesn't ship libPolly.a
+          LV=$(llvm-config --version | cut -d. -f1)
+          sudo apt-get install -y "libpolly-${LV}-dev" || sudo apt-get install -y libpolly-18-dev || true
+          echo "libPolly.a: $(find /usr/lib -name 'libPolly.a' 2>/dev/null | head -1 || echo MISSING)"
+          echo "llvm-config: $(llvm-config --version)"
+
+      - name: Install Rust (latest stable; modern deps need >=1.85)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Setup emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with: { version: "3.1.56" }
+
+      - name: Clone mlc-llm v0.19.0 (classic, pre-tvm-ffi)
+        run: git clone --branch v0.19.0 --depth 1 --recursive --shallow-submodules https://github.com/mlc-ai/mlc-llm.git
+
+      - name: Build TVM from source + install tvm python (~35 min)
+        run: |
+          set -e
+          cd mlc-llm/3rdparty/tvm
+          mkdir -p build
+          cp cmake/config.cmake build/config.cmake
+          {
+            echo 'set(CMAKE_BUILD_TYPE RelWithDebInfo)'
+            echo 'set(USE_LLVM "llvm-config --link-static")'
+            echo 'set(HIDE_PRIVATE_SYMBOLS ON)'
+            echo 'set(USE_CUDA OFF)'; echo 'set(USE_METAL OFF)'
+            echo 'set(USE_VULKAN OFF)'; echo 'set(USE_OPENCL OFF)'
+          } >> build/config.cmake
+          (cd build && cmake .. -G Ninja && ninja)
+          echo "TVM_HOME=$PWD" >> "$GITHUB_ENV"
+          echo "TVM_LIBRARY_PATH=$PWD/build" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$PWD/build:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
+          pip install --upgrade pip
+          export TVM_LIBRARY_PATH="$PWD/build"
+          pip install -e ./python
+          python -c "import tvm; print('TVM_OK', tvm.__file__)"
+
+      - name: Build mlc-llm from source + install python
+        env:
+          CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+        run: |
+          set -e
+          cargo --version
+          # v0.19 tokenizers-c trips the deny-by-default 'dangerous_implicit_autorefs'
+          # lint on modern Rust. Cap lints to allow for that crate's cargo build.
+          sed -i 's|set(TOKENIZERS_CPP_RUST_FLAGS "")|set(TOKENIZERS_CPP_RUST_FLAGS "--cap-lints=allow")|' \
+            mlc-llm/3rdparty/tokenizers-cpp/CMakeLists.txt
+          cd mlc-llm
+          mkdir -p build
+          {
+            echo 'set(CMAKE_BUILD_TYPE RelWithDebInfo)'
+            echo 'set(USE_LLVM "llvm-config --link-static")'
+            echo 'set(HIDE_PRIVATE_SYMBOLS ON)'
+            echo "set(TVM_SOURCE_DIR $PWD/3rdparty/tvm)"
+            echo 'set(USE_CUDA OFF)'; echo 'set(USE_METAL OFF)'
+            echo 'set(USE_VULKAN OFF)'; echo 'set(USE_OPENCL OFF)'
+          } > build/config.cmake
+          (cd build && cmake .. -G Ninja && ninja)
+          pip install -e ./python
+          pip install -U huggingface_hub
+          python -c "import mlc_llm; print('MLC_OK', mlc_llm.__file__)"
+
+      - name: Download base weights
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}   # required for gated repos (Llama, Gemma) + private fine-tunes
+        run: hf download "$MODEL_HF" --local-dir "hf/$NAME"
+
+      - name: convert_weight + gen_config + compile (WebGPU wasm)
+        run: |
+          set -e
+          # `mlc_llm compile --device webgpu` links several wasm bitcode runtimes:
+          #  - mlc_wasm_runtime.bc  (from mlc-llm/web; found via MLC_LLM_SOURCE_DIR)
+          #  - wasm_runtime.bc / tvmjs_support.bc / webgpu_runtime.bc  (from tvm/web;
+          #    found via TVM's find_lib_path, which searches tvm/build -> copy them there)
+          export MLC_LLM_SOURCE_DIR="$PWD/mlc-llm"
+          (cd mlc-llm/web && TVM_SOURCE_DIR="$TVM_HOME" make dist/wasm/mlc_wasm_runtime.bc)
+          (cd "$TVM_HOME/web" && make dist/wasm/wasm_runtime.bc dist/wasm/tvmjs_support.bc dist/wasm/webgpu_runtime.bc)
+          cp "$TVM_HOME"/web/dist/wasm/*.bc "$TVM_HOME/build/"
+          OUT=dist-model; W="$OUT/$NAME-MLC"; L="$OUT/libs"
+          mkdir -p "$W" "$L"
+          mlc_llm convert_weight "hf/$NAME" --quantization "${{ inputs.quant }}" \
+            --model-type "$ARCH" -o "$W"
+          mlc_llm gen_config "hf/$NAME" --quantization "${{ inputs.quant }}" \
+            --model-type "$ARCH" --conv-template "$CONV" \
+            --prefill-chunk-size 1024 -o "$W"
+          mlc_llm compile "$W/mlc-chat-config.json" --device webgpu \
+            -o "$L/$NAME-${{ inputs.quant }}-webgpu.wasm"
+          ls -la "$L" "$W"
+
+      # Save outputs FIRST and unconditionally so a bad HF token never loses a build.
+      - name: Upload artifacts (wasm + weights)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: "${{ env.NAME }}-mlc", path: dist-model, retention-days: 14 }
+
+      - name: Attach wasm to a Release
+        if: always()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: model-${{ env.NAME }}
+          files: dist-model/libs/*.wasm
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+
+      - name: Upload weights + wasm to Hugging Face (optional; needs a Write token)
+        if: ${{ always() && inputs.upload_hf }}
+        continue-on-error: true
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}        # repo secret
+          HF_NAMESPACE: ${{ vars.HF_NAMESPACE }}   # repo variable, e.g. yourname
+        run: |
+          set -euo pipefail
+          if [ -z "${HF_NAMESPACE:-}" ]; then
+            echo "::error::HF upload skipped: repo VARIABLE 'HF_NAMESPACE' is not set."
+            echo "Set it under Settings -> Secrets and variables -> Actions -> Variables (e.g. HF_NAMESPACE=yourname)."
+            exit 1
+          fi
+          if [ -z "${HF_TOKEN:-}" ]; then
+            echo "::error::HF upload skipped: repo SECRET 'HF_TOKEN' is not set (needs a Hugging Face Write token)."
+            echo "Set it under Settings -> Secrets and variables -> Actions -> Secrets."
+            exit 1
+          fi
+          REPO="$HF_NAMESPACE/$NAME-MLC"
+          echo "Uploading weights + wasm to https://huggingface.co/$REPO"
+          hf upload "$REPO" "dist-model/$NAME-MLC" . --token "$HF_TOKEN"
+          # Make the HF repo self-contained: also push the WebGPU model library.
+          hf upload "$REPO" "dist-model/libs/$NAME-${{ inputs.quant }}-webgpu.wasm" \
+            "libs/$NAME-${{ inputs.quant }}-webgpu.wasm" --token "$HF_TOKEN"

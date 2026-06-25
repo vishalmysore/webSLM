@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>webSLM — browser domain SLM (WebLLM/WebGPU)</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.3rem; margin-bottom: .25rem; }
+  .sub { opacity: .7; margin-top: 0; }
+  fieldset { border: 1px solid #8884; border-radius: 8px; margin: 1rem 0; }
+  label { display: block; font-weight: 600; margin: .5rem 0 .15rem; }
+  input, textarea, button, select { font: inherit; width: 100%; box-sizing: border-box; padding: .5rem; border-radius: 6px; border: 1px solid #8886; background: transparent; color: inherit; }
+  button { width: auto; cursor: pointer; font-weight: 600; }
+  #log { white-space: pre-wrap; background: #8881; border-radius: 8px; padding: .75rem; min-height: 3rem; }
+  #out { white-space: pre-wrap; background: #2a7d2a18; border-radius: 8px; padding: .75rem; min-height: 3rem; }
+  .row { display: flex; gap: .5rem; align-items: center; }
+  .hint { opacity: .65; font-weight: 400; font-size: .85em; }
+  code { background: #8882; padding: 0 .25em; border-radius: 4px; }
+</style>
+</head>
+<body>
+  <h1>webSLM — domain SLM, in your browser</h1>
+  <p class="sub">Loads an MLC-compiled Small Language Model entirely on-device via WebLLM/WebGPU.
+  No server, no API key. Requires a WebGPU-capable browser (recent Chrome/Edge).</p>
+
+  <fieldset>
+    <legend>Model source</legend>
+    <label>Weights URL <span class="hint">(Hugging Face repo, the <code>*-MLC</code> folder)</span></label>
+    <input id="model" value="https://huggingface.co/yourname/WebSLM-Code-1.5B-MLC" />
+
+    <label>Model library URL <span class="hint">(the compiled <code>.wasm</code>; Release asset or HF <code>/resolve/main/libs/...</code>)</span></label>
+    <input id="modelLib" value="https://huggingface.co/yourname/WebSLM-Code-1.5B-MLC/resolve/main/libs/WebSLM-Code-1.5B-q4f16_1-webgpu.wasm" />
+
+    <div class="row" style="margin-top:.75rem">
+      <button id="loadBtn">Load model</button>
+      <span id="status" class="hint">idle</span>
+    </div>
+    <div id="log" aria-live="polite"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Chat</legend>
+    <label>System prompt <span class="hint">(set the domain persona)</span></label>
+    <textarea id="system" rows="2">You are a concise, expert coding assistant.</textarea>
+    <label>Prompt</label>
+    <textarea id="prompt" rows="3">Write a Python function that returns the nth Fibonacci number iteratively.</textarea>
+    <div class="row" style="margin-top:.5rem">
+      <button id="sendBtn" disabled>Generate</button>
+      <span id="tps" class="hint"></span>
+    </div>
+    <div id="out" aria-live="polite"></div>
+  </fieldset>
+
+  <p class="hint">
+    Pin <code>@mlc-ai/web-llm</code> to the build that matches the mlc-llm you compiled with.
+    These wasms are built with mlc-llm <b>v0.19.0</b> → web-llm <b>0.2.79</b> (pinned below).
+    A wasm/runtime mismatch raises a “model lib version” error.
+  </p>
+
+  <script type="module">
+    import * as webllm from "https://esm.run/@mlc-ai/web-llm@0.2.79";
+
+    const $ = (id) => document.getElementById(id);
+    const log = (m) => { $("log").textContent += m + "\n"; };
+    let engine = null;
+
+    $("loadBtn").addEventListener("click", async () => {
+      const model = $("model").value.trim();
+      const model_lib = $("modelLib").value.trim();
+      const model_id = "webslm-custom";
+
+      $("log").textContent = "";
+      $("status").textContent = "loading…";
+      $("loadBtn").disabled = true;
+
+      // CUSTOM model config: point WebLLM straight at your compiled artifacts.
+      const appConfig = { model_list: [{ model, model_id, model_lib }] };
+
+      try {
+        engine = await webllm.CreateMLCEngine(model_id, {
+          appConfig,
+          initProgressCallback: (p) => { $("status").textContent = p.text; log(p.text); },
+        });
+        $("status").textContent = "ready ✓";
+        $("sendBtn").disabled = false;
+      } catch (e) {
+        $("status").textContent = "failed";
+        log("ERROR: " + (e?.message || e));
+        $("loadBtn").disabled = false;
+      }
+    });
+
+    $("sendBtn").addEventListener("click", async () => {
+      if (!engine) return;
+      $("out").textContent = "";
+      $("sendBtn").disabled = true;
+      const messages = [
+        { role: "system", content: $("system").value },
+        { role: "user", content: $("prompt").value },
+      ];
+      try {
+        const t0 = performance.now();
+        let toks = 0;
+        const stream = await engine.chat.completions.create({ messages, stream: true });
+        for await (const chunk of stream) {
+          const d = chunk.choices[0]?.delta?.content || "";
+          if (d) { $("out").textContent += d; toks++; }
+        }
+        const secs = (performance.now() - t0) / 1000;
+        $("tps").textContent = `${toks} chunks in ${secs.toFixed(1)}s`;
+      } catch (e) {
+        $("out").textContent += "\nERROR: " + (e?.message || e);
+      } finally {
+        $("sendBtn").disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
