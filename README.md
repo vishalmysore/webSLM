@@ -58,6 +58,9 @@ your data (JSONL) ─finetune/─► merged model on HF ─build-slm.yml (Custom
   in Colab (T4 GPU). It clones the repo, trains on the domain you pick (medical/legal/insurance
   or your own JSONL), and **pushes a finished model to your HF account**; then build it via the
   Action's **Custom** path. See [`finetune/README.md`](finetune/README.md).
+
+  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/vishalmysore/webSLM/blob/main/finetune/finetune_webslm_colab.ipynb)
+
 - **Script:** `python finetune/train_lora.py --base Qwen/Qwen2.5-0.5B-Instruct
   --data finetune/data/medical.jsonl --push-merged yourname/WebSLM-Medical-0.5B`
 - **Already trained?** A full fine-tune is a standard HF checkpoint — point the pipeline straight

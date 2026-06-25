@@ -20,6 +20,8 @@ need MLC/emscripten to fine-tune.
 
 ## Fastest path — the clone-and-run Colab
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/vishalmysore/webSLM/blob/main/finetune/finetune_webslm_colab.ipynb)
+
 Open **[`finetune_webslm_colab.ipynb`](finetune_webslm_colab.ipynb)** in Colab
 (Runtime → T4 GPU). It clones this repo, installs deps, logs you into HF, trains on the domain
 you pick, and **pushes a finished model to your HF account**. The last cell tells you exactly
