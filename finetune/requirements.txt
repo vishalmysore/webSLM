@@ -1,0 +1,11 @@
+# webSLM fine-tuning deps. On Colab, torch is preinstalled (these will reuse it).
+# Versions known-good together as of early 2026; the TRL SFT API drifts, so if you
+# bump trl/transformers and hit an arg error, see the note in train_lora.py.
+torch>=2.3
+transformers>=4.46
+trl>=0.12
+peft>=0.13
+datasets>=3.0
+accelerate>=1.0
+# Only needed for QLoRA (train_lora.py --bits 4) on larger bases:
+# bitsandbytes>=0.44

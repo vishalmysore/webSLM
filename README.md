@@ -45,20 +45,26 @@ Phi-3.5-mini) is the practical ceiling. 7B+ won't load comfortably in a browser 
 If a domain base already exists (code, math), you don't need to train anything. Just compile it
 and use it normally in WebLLM for faster/private/offline domain inference in the browser.
 
-### 2. Fine-tuning integration
-Fine-tune a small base on your domain data first (LoRA is efficient), then feed the resulting
-checkpoint into this pipeline:
+### 2. Fine-tuning integration (medical / legal / insurance / your own)
+Train a small base on your domain data first, then feed the result into this pipeline. The
+**[`finetune/`](finetune/)** folder is a complete, clone-and-run workflow for this — starter
+datasets, a LoRA training script, and a Colab:
 
-- **Full fine-tune** → you already have a standard HF checkpoint → point the pipeline straight at it.
-- **LoRA adapter** → merge it into the base with [`merge_lora.py`](merge_lora.py), then build the
-  merged checkpoint:
-  ```bash
-  pip install torch transformers peft
-  python merge_lora.py --base Qwen/Qwen2.5-0.5B-Instruct \
-      --adapter ./my-medical-lora --out ./merged/WebSLM-Medical-0.5B
-  MODEL_HF=./merged/WebSLM-Medical-0.5B ARCH=qwen2 CONV=qwen2 \
-      NAME=WebSLM-Medical-0.5B ./build.sh
-  ```
+```
+your data (JSONL) ─finetune/─► merged model on HF ─build-slm.yml (Custom)─► WebGPU .wasm
+```
+
+- **Easiest:** open [`finetune/finetune_webslm_colab.ipynb`](finetune/finetune_webslm_colab.ipynb)
+  in Colab (T4 GPU). It clones the repo, trains on the domain you pick (medical/legal/insurance
+  or your own JSONL), and **pushes a finished model to your HF account**; then build it via the
+  Action's **Custom** path. See [`finetune/README.md`](finetune/README.md).
+- **Script:** `python finetune/train_lora.py --base Qwen/Qwen2.5-0.5B-Instruct
+  --data finetune/data/medical.jsonl --push-merged yourname/WebSLM-Medical-0.5B`
+- **Already trained?** A full fine-tune is a standard HF checkpoint — point the pipeline straight
+  at it. A standalone LoRA adapter → merge with [`merge_lora.py`](merge_lora.py) first.
+
+> Training (GPU) and quantization (CPU) are deliberately separate: `finetune/` makes the model,
+> the build Action turns it into a browser SLM.
 
 ## Build it
 
@@ -107,7 +113,8 @@ const engine = await webllm.CreateMLCEngine("webslm-code-1.5b", { appConfig });
 |---|---|
 | `.github/workflows/build-slm.yml` | the CI pipeline (CPU Ubuntu): domain presets + Custom override |
 | `build.sh` | local `convert_weight` → `gen_config` → `compile --device webgpu` |
-| `merge_lora.py` | fine-tuning integration: merge a LoRA adapter → a checkpoint the pipeline builds |
+| `finetune/` | train a domain base on your data (datasets + LoRA script + clone-and-run Colab) |
+| `merge_lora.py` | merge a separately-trained LoRA adapter → a checkpoint the pipeline builds |
 | `colab/` | interactive build notebook + notes |
 | `demo/index.html` | minimal WebLLM browser page to load + test a compiled SLM |
 | `model-card/README.md` | Hugging Face model-card template for a published SLM |
