@@ -212,13 +212,14 @@ jobs:
         if: ${{ always() && inputs.upload_hf }}
         continue-on-error: true
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}        # repo secret
-          HF_NAMESPACE: ${{ vars.HF_NAMESPACE }}   # repo variable, e.g. yourname
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}                              # repo secret
+          # HF_NAMESPACE works whether you set it as a repo Variable OR a Secret.
+          HF_NAMESPACE: ${{ vars.HF_NAMESPACE || secrets.HF_NAMESPACE }}
         run: |
           set -euo pipefail
           if [ -z "${HF_NAMESPACE:-}" ]; then
-            echo "::error::HF upload skipped: repo VARIABLE 'HF_NAMESPACE' is not set."
-            echo "Set it under Settings -> Secrets and variables -> Actions -> Variables (e.g. HF_NAMESPACE=yourname)."
+            echo "::error::HF upload skipped: 'HF_NAMESPACE' is not set as a repo Variable or Secret."
+            echo "Add it under Settings -> Secrets and variables -> Actions (Variables tab preferred, e.g. HF_NAMESPACE=yourname)."
             exit 1
           fi
           if [ -z "${HF_TOKEN:-}" ]; then

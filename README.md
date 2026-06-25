@@ -82,8 +82,9 @@ choose quantization, optionally tick `upload_hf`. It builds mlc-llm **v0.19.0 fr
 (plus weights + wasm to HF when enabled).
 
 Host the outputs so a browser can load them by URL:
-- **weights** (many shard files) → **Hugging Face**: set repo **secret** `HF_TOKEN` + **variable**
-  `HF_NAMESPACE` (e.g. `yourname`) and tick `upload_hf`.
+- **weights** (many shard files) → **Hugging Face**: set repo **secret** `HF_TOKEN` (Write token) +
+  `HF_NAMESPACE` (e.g. `yourname`) as a repo **Variable** *or* **Secret** — they live in two separate
+  stores (Settings → Secrets and variables → Actions); the workflow reads either. Then tick `upload_hf`.
 - **wasm** (single file) → the Release asset URL (or the HF repo, which the workflow also pushes).
 
 ### B) Colab (interactive)
