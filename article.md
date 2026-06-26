@@ -146,33 +146,70 @@ webSLM is a pipeline and toolkit for building domain-specific small language mod
 
 The motivation came from a practical question: if WebLLM already makes it possible to run a general-purpose SLM in the browser, what does it take to make that model actually useful for a specific domain — insurance, legal, medical, or a custom vertical — without deploying any server infrastructure? The answer turned out to be a combination of LoRA fine-tuning, careful config normalization for MLC-LLM compatibility, and reproducible build paths that do not require a local Linux GPU machine.
 
+### What doing this without webSLM actually looks like
+
+Before webSLM existed, the process of taking a Hugging Face model and getting it running domain-specifically in a browser required navigating several independent and poorly-documented steps:
+
+- The MLC-LLM compilation pipeline has three distinct commands (`convert_weight`, `gen_config`, `mlc_llm compile`) with non-obvious ordering and a version-sensitive environment. Getting the right Python environment, CUDA setup, and MLC version aligned was hours of work on its own.
+- Newer Hugging Face model configs ship with fields that MLC-LLM v0.19.0 does not understand, causing silent failures or NaN outputs during inference. There is no upstream documentation for this — you discover it when your compiled model produces garbage in the browser.
+- LoRA adapters from Hugging Face PEFT need to be merged back into the base model before compilation. The merge is not automatic and requires understanding the model's config format.
+- GitHub Actions support for the GPU-less compilation step (CPU-only compile is possible for WebGPU targets) did not exist as a ready-made workflow. Building one from scratch requires understanding how to cache the MLC build environment across runs.
+- Hosting the compiled artifacts correctly — WASM, weight shards, model config — and configuring WebLLM to find them requires writing custom JSON configuration that is not templated anywhere.
+
+Each of these is a solvable problem in isolation. Together, they represent a full day to several days of debugging for someone approaching this without prior MLC-LLM experience. webSLM absorbs all of it.
+
 ### What webSLM enables
 
-- Domain-specific behavior through LoRA fine-tuning
-- Browser-first deployment with privacy and offline capability
-- Reproducible build paths using GitHub Actions, Colab, or local scripts
+- Domain-specific behavior through LoRA fine-tuning on your own data
+- Browser-first deployment with no server, no API key, and full offline capability
+- Reproducible build paths using GitHub Actions, Colab, or local scripts — no local GPU required for the compilation step
+
+## A concrete walkthrough: from base model to browser
+
+To make this tangible, here is how a complete run looks using Qwen2.5-1.5B as the base model and an insurance domain as the target.
+
+**Step 1: Fine-tuning on insurance data**
+
+The `finetune/` directory contains a starter `insurance.jsonl` dataset with examples formatted as chat turns. Each example has a system prompt establishing the assistant's behavior — cautious, policy-grounded, always recommending professional review — and a user/assistant pair demonstrating how to handle a coverage question. You replace or extend these with your own examples, then run the fine-tuning Colab notebook or `train_lora.py` directly. On a T4 GPU in Colab, a few hundred examples train in under an hour. The output is a LoRA adapter.
+
+**Step 2: Merging the adapter**
+
+`merge_lora.py` combines the LoRA adapter back into the base model weights, producing a merged Hugging Face checkpoint. This is what MLC-LLM will compile. The script also handles `normalize_config.py` compatibility fixes — stripping fields from the Hugging Face config that cause MLC-LLM v0.19.0 to fail silently.
+
+**Step 3: Compilation**
+
+The GitHub Actions workflow (`.github/workflows/build-slm.yml`) takes the merged model repo as input and runs the full MLC-LLM pipeline: `convert_weight` to quantize to `q4f16_1` (or `q4f32_1` for models that produce NaNs at half precision), `gen_config` to produce the chat template, and `mlc_llm compile --device webgpu` to produce the `.wasm` model library. The compiled artifacts are uploaded to a GitHub Release and optionally pushed to Hugging Face.
+
+**Step 4: Browser deployment**
+
+`demo/index.html` is a self-contained WebLLM chat interface. You point it at your model config URL — which references the weight shards on Hugging Face and the `.wasm` on GitHub Releases — and it loads directly in a browser. First load caches the weights locally using the browser's cache API. Subsequent loads are near-instant.
+
+The user experience is a chat interface running entirely on-device. There is no loading spinner waiting on a remote API. There is no usage cost. The model's responses reflect its fine-tuning: it answers insurance questions with appropriate hedging, recommends consulting a licensed professional for binding decisions, and stays within the domain rather than wandering into general knowledge.
 
 ## How webSLM works in practice
 
 1. Select a compatible small base model.
-2. Optionally fine-tune with domain data (medical, legal, insurance, or custom).
-3. Compile/quantize with MLC-LLM.
-4. Host artifacts (`.wasm` + weight shards).
-5. Load and run in browser through WebLLM.
+2. Fine-tune with domain data using the provided LoRA script or Colab notebook.
+3. Merge the adapter and normalize the config.
+4. Compile and quantize with MLC-LLM via GitHub Actions or Colab.
+5. Host the `.wasm` and weight shards on GitHub Releases or Hugging Face.
+6. Load and run in any browser through WebLLM.
 
 ### Build options
 
-- GitHub Actions for automated CI builds
-- Colab notebooks for cloud workflow
-- Local script-based build for full control
+- GitHub Actions: triggers on push, produces a downloadable release with all browser artifacts
+- Colab: interactive notebook for fine-tuning, merging, and building in one session
+- Local: run `build.sh` end-to-end on a machine with MLC-LLM installed
 
 ### Repo components
 
-- `finetune/` for LoRA workflow and starter datasets
-- `colab/` for notebook-based training/build
-- `demo/index.html` for quick browser testing
-- `build.sh`, `merge_lora.py`, `normalize_config.py` for local build and compatibility
-- `.github/workflows/build-slm.yml` for CI automation
+- `finetune/` — LoRA training scripts, Colab notebook, and domain starter datasets
+- `colab/` — build notebook for interactive compilation without local setup
+- `demo/index.html` — self-contained browser chat UI ready to point at any compiled model
+- `build.sh` — local end-to-end build script
+- `merge_lora.py` — merges adapter weights before compilation
+- `normalize_config.py` — strips unsupported config fields to fix MLC-LLM v0.19.0 compatibility
+- `.github/workflows/build-slm.yml` — CI pipeline that handles the full compile-and-release cycle
 
 ## Data quality and domain specialization
 
