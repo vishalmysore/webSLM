@@ -117,25 +117,34 @@ A fine-tuned SLM is not trying to memorize every document in a corpus. It is lea
 
 The right mental model: RAG and fine-tuned SLMs are often complementary. You fine-tune for behavior and style; you add RAG when you need real-time document grounding. For the browser use case webSLM targets, RAG is not practical — there is no server-side retrieval layer. Fine-tuning is the only mechanism available for domain specialization.
 
-## Then comes browser inference: WebLLM and MLC-LLM
+## Browser inference: WebLLM and MLC-LLM
 
-Before introducing webSLM, it helps to understand the runtime stack:
+Before webSLM makes sense, two underlying projects need to be understood: WebLLM and MLC-LLM. Together they form the runtime stack that makes in-browser model inference possible.
 
-- WebLLM is the browser inference runtime using WebGPU.
-- MLC-LLM is the compiler/backend that converts compatible models into browser-runnable artifacts.
+### WebLLM
 
-### What MLC-LLM produces
+WebLLM is an open-source project from MLC-AI that brings LLM inference into the browser using WebGPU — the modern hardware-accelerated compute API available in Chrome, Edge, and other browsers. Unlike WebGL, WebGPU exposes general-purpose GPU compute, which is what neural network inference actually requires.
 
-- Quantized weight shards
-- A `.wasm` model library
+From a developer's perspective, WebLLM exposes an OpenAI-compatible JavaScript API. You call `engine.chat.completions.create()` and get streaming responses back, all running locally. There is no network call, no API key, and no external dependency once the model weights are loaded into the browser cache. The project supports a growing list of model families — Llama, Phi, Qwen, Gemma, Mistral — and is actively maintained at [github.com/mlc-ai/web-llm](https://github.com/mlc-ai/web-llm).
 
-These outputs are what WebLLM loads for client-side inference.
+The constraint is real: WebGPU memory is shared with the browser process and limited by the device's GPU. This is precisely why SLMs in the 0.5B–3.5B range are the practical sweet spot. A 7B model in a browser is slow and memory-pressured on most consumer hardware. A 1.5B model loads in seconds and runs at a usable token rate.
 
-## Introducing webSLM (your project)
+### MLC-LLM
 
-webSLM is your experiment to bring domain-specific SLMs to the web in a practical, repeatable way.
+WebLLM is the runtime, but it cannot load a raw Hugging Face model checkpoint. That is where MLC-LLM comes in. MLC-LLM is a universal model deployment engine — part of the Apache TVM ecosystem — that compiles model weights into a target-specific format. For browser deployment, it produces two outputs:
 
-It is a pipeline/toolkit, not a pre-trained model. The goal is to take a small base model, optionally fine-tune it on domain data, compile it for WebGPU, and run it directly in the browser with no server dependency.
+- **Quantized weight shards**: the model parameters compressed to INT4 or another low-bit format, split into files that can be cached by the browser
+- **A `.wasm` model library**: a WebAssembly binary containing the compiled compute kernels for that specific model architecture
+
+The compilation step (`mlc_llm compile --device webgpu`) is what transforms a standard model into something WebLLM can execute. It also runs `gen_config` to produce the chat template and sampling configuration, and `convert_weight` to quantize and shard the parameters. These are the steps that webSLM automates.
+
+## webSLM: an experiment in domain-specific browser AI
+
+With SLMs, quantized models, RAG, and the WebLLM/MLC-LLM stack as context, webSLM becomes easier to position precisely.
+
+webSLM is a pipeline and toolkit for building domain-specific small language models that run entirely in the browser. It is not a pre-trained model and not a fork of WebLLM. It is the build system and workflow that sits between a raw Hugging Face checkpoint and a working browser-based chatbot — handling the fine-tuning, compilation, quantization, hosting, and demo wiring that would otherwise require deep familiarity with MLC-LLM internals.
+
+The motivation came from a practical question: if WebLLM already makes it possible to run a general-purpose SLM in the browser, what does it take to make that model actually useful for a specific domain — insurance, legal, medical, or a custom vertical — without deploying any server infrastructure? The answer turned out to be a combination of LoRA fine-tuning, careful config normalization for MLC-LLM compatibility, and reproducible build paths that do not require a local Linux GPU machine.
 
 ### What webSLM enables
 
@@ -187,10 +196,6 @@ For stronger domain performance, you usually need hundreds to thousands of high-
 
 ## Conclusion
 
-The progression is simple:
+The gap between a capable small language model and a useful domain-specific browser application is not a research problem. It is an engineering and tooling problem. SLMs have reached a point where a 1.5B or 3.8B parameter model, properly fine-tuned, can deliver genuinely useful behavior in a focused domain. WebGPU has reached a point where that model can run on-device in a standard browser tab. What has been missing is a clean, reproducible path between the two.
 
-1. Understand SLMs and where they differ from quantized LLMs and RAG.
-2. Understand the browser stack (WebLLM + MLC-LLM).
-3. Use webSLM as your experiment framework to bring domain-specific SLMs to the web.
-
-This framing makes webSLM feel like the natural end of the story, not the starting point.
+webSLM is an attempt to close that gap — for developers who want a private, offline-capable, domain-specific assistant without infrastructure, and for anyone who wants to understand what it actually takes to bring an SLM from a Hugging Face repo to a working browser deployment.
