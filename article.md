@@ -1,192 +1,186 @@
-﻿# webSLM: Small Language Models, Quantized LLMs, and Browser AI
+﻿# webSLM: Building Domain-Specific Browser AI with SLMs, Quantized LLMs, WebLLM, and MLC-LLM
 
-## Introduction
+webSLM is a pipeline/toolkit — not a pre-trained model — for creating and deploying small language models (SLMs) that run entirely in the browser using WebGPU via WebLLM and MLC-LLM.
 
-webSLM is a lightweight pipeline and toolkit for building browser-deployable language models. It is not a pre-trained model itself. Instead, it helps you take a compatible base model from Hugging Face, optionally fine-tune it for a domain, and compile it into artifacts that WebLLM can run in the browser.
+It makes it easy to take a compatible base model from Hugging Face, optionally fine-tune it for a domain, compile it into browser assets, and serve it as an on-device chatbot. The result is a private, offline-capable model that loads by URL with no server or API keys required.
 
-This article explains:
+## What webSLM does
 
-- What SLMs are
-- What quantized LLMs are
-- How they differ
-- What WebLLM and MLC-LLM do
-- How webSLM builds domain-specific browser AI with GitHub Actions and Colab
+### Core functionality
+
+- Starts with a small base model such as Qwen2.5-0.5B / 1.5B, Phi-3.5-mini, or another MLC-LLM-compatible model.
+- Optionally fine-tunes it on domain-specific data using the provided LoRA script and Colab notebook.
+- Compiles and quantizes it with MLC-LLM for WebGPU.
+- Produces browser-runnable artifacts: quantized weight shards and a `.wasm` model library.
+- Hosts the outputs on Hugging Face, GitHub Releases, or another static host.
+- Loads the model in a browser through a WebLLM config and demo page.
+
+### Why this matters
+
+- Domain-specific models can be far more useful than a generic chatbot for industry verticals such as insurance, legal, or medical.
+- Running in the browser preserves privacy, removes backend costs, and enables offline usage.
+- Small models are easier to build, tune, and deploy for WebGPU environments.
 
 ## What is an SLM?
 
 SLM stands for Small Language Model.
 
-### Key characteristics
+Small language models are designed with far fewer parameters than traditional large LLMs. In this context, webSLM targets models in the 0.5B–2B range, and sometimes up to around 3–4B.
 
-- Parameter size: usually 0.5B to 3B parameters, with some models up to around 7B.
-- Architected or distilled for efficiency, not just compressed after training.
-- Designed to run on limited hardware, including browsers, phones, and edge devices.
-- Well-suited for domain-specific applications where compact size and latency matter.
+### Key characteristics of SLMs
 
-### Why SLMs are useful
+- Natively small architecture — built or distilled to be compact.
+- Efficient on low-resource hardware such as browsers, laptops, and edge devices.
+- Often the best trade-off when privacy, latency, and cost are more important than extreme scale.
+- Easier to fine-tune for specialized domains.
 
-- Lower memory footprint and faster inference.
-- Better privacy, since they can run locally.
-- Simpler deployment and lower cost.
-- Easier to fine-tune for a specific vertical or use case.
-
-### Example small models
+### Typical SLM examples
 
 - Qwen2.5-0.5B / 1.5B
-- Phi-3.5-mini / Phi-4-mini
-- Gemma-2 / Gemma-3 small variants
-- Mistral small models
+- Phi-3.5-mini
+- Gemma and Mistral small variants
 
 ## What is a Quantized LLM?
 
-Quantization reduces the numerical precision of a model's weights. It is a form of compression that can be applied to both large LLMs and small models.
+Quantization is a compression technique applied to neural network weights. It reduces numerical precision from high-precision formats such as FP32 or FP16/BF16 into lower-precision formats like INT8, INT4, or even lower-bit representations.
+
+### What quantization does
+
+- Shrinks model size substantially.
+- Reduces VRAM and memory demands.
+- Improves inference speed on supported hardware.
+- Makes larger models more practical to run in constrained environments.
 
 ### Common quantization formats
 
-- INT8 (8-bit)
-- INT4 (4-bit)
-- Advanced low-bit schemes: 3-bit, 2-bit, GPTQ, AWQ, GGUF
-
-### What quantization achieves
-
-- Smaller model size
-- Lower GPU/CPU memory requirements
-- Faster inference on supported hardware
-- Reduced power consumption
+- INT8
+- INT4
+- Lower-bit schemes such as 3-bit or 2-bit
+- Advanced methods: GPTQ, AWQ, GGUF
 
 ### Trade-offs
 
-- Mild quantization often retains near-original quality.
-- Aggressive quantization can hurt reasoning, response length, and overall fidelity.
-- The exact quality impact depends on the model, quantization method, and task.
-
-### Popular tools and formats
-
-- `llama.cpp` / GGUF
-- `bitsandbytes`
-- Hugging Face `optimum`
-- `mlc-llm`
+- Mild quantization often preserves most of the model's capability.
+- Aggressive quantization can introduce quality degradation, shorter answers, and more repetition.
+- The impact depends on the model, the quantization method, and the task.
 
 ## SLM vs Quantized LLM
 
 | Aspect | SLM | Quantized LLM |
 |---|---|---|
-| Definition | A model designed to be small from the start | A larger model compressed into lower precision |
-| Origin | Trained or distilled as a small model | Derived from a full-precision large model |
-| Typical size | 0.5B–7B parameters | 13B–405B+ before quantization |
+| Definition | Model designed to be small from the start | Large model compressed via reduced numeric precision |
+| Origin | Trained/distilled as a small model | Post-training quantization of a larger model |
+| Typical size | 0.5B–7B | 13B–405B+ before quantization |
 | Efficiency | Efficient by design | Efficient only after quantization |
-| Deployment | Browser, mobile, edge, low-end hardware | Local GPU inference, limited VRAM setups |
-| Quality trade-off | Optimized for small size | Varies with quantization bits |
-| Use cases | On-device, privacy-first, offline apps | Large-model access with constrained hardware |
+| Best use cases | Browser, mobile, privacy-first, offline | Local GPU inference with limited VRAM |
+| Quality trade-off | Optimized for small size | Depends on bit precision and quant method |
+| Can it be quantized? | Yes — often further quantized for browser use | Yes — but it starts large |
 
-### What matters most
+### What this means
 
-- SLM is about scale and architecture.
+- SLM is about model scale and architecture.
 - Quantization is about numeric precision and compression.
-- You can quantize an SLM further, but a quantized LLM usually starts from a much larger base.
-- The right choice depends on your constraints: privacy, latency, hardware, and required capability.
+- An SLM can be quantized further, but a quantized LLM usually begins as a much larger model.
+- For browser-based private AI, SLMs are usually the stronger choice.
 
-## WebLLM and MLC-LLM
+## What is WebLLM?
 
-### What is WebLLM?
+WebLLM is an open-source browser runtime by MLC-AI for running LLMs and SLMs with WebGPU.
 
-WebLLM is a browser runtime for executing models with WebGPU.
+### What WebLLM provides
 
-- Runs models entirely in the browser.
-- Requires no server or external API.
-- Supports familiar JavaScript/TypeScript inference APIs.
-- Works best with small or quantized models.
+- Client-side inference inside the browser.
+- No backend server, no API keys, and no external inference endpoint.
+- A JavaScript/TypeScript API that resembles OpenAI-style `chat.completions` usage.
+- Support for streaming, JSON mode, and browser-friendly workflows.
 
-### What is MLC-LLM?
+### Best fit
 
-MLC-LLM is the model compilation toolchain.
+WebLLM is ideal for small and quantized models that can run comfortably in a browser environment.
 
-- Converts model checkpoints into browser-compatible assets.
-- Generates quantized weight shards and a WebAssembly model library (`.wasm`).
-- Supports WebGPU and other device targets.
+## What is MLC-LLM?
 
-### How WebLLM and MLC-LLM work together
+MLC-LLM is the compilation backend that prepares models for WebLLM and other device targets.
 
-- `mlc-llm` compiles the model and weight files.
-- `WebLLM` loads those files in the browser and performs inference.
-- The combination enables client-side, private browser AI with no backend.
+### What MLC-LLM does
 
-## What webSLM does
+- Converts model checkpoints into quantized weight shards.
+- Generates a browser-compatible `.wasm` model library.
+- Supports compilation for WebGPU, iOS, Android, and native backends.
 
-webSLM is a practical pipeline built on top of WebLLM and MLC-LLM.
+### Why MLC-LLM matters for webSLM
 
-### Core workflow
+MLC-LLM is the tool that turns a domain-specific SLM into a real browser model. Without it, the model cannot be executed efficiently in WebLLM.
 
-1. Start from a compatible small base model.
-2. Optionally fine-tune it on domain-specific data using LoRA.
-3. Compile and quantize it with MLC-LLM for WebGPU.
-4. Host the compiled artifacts.
-5. Load the model in a browser with WebLLM.
+## How webSLM works
 
-### Key features
+### Workflow summary
 
-- Model-agnostic: supports Qwen2, Phi, Llama, Gemma, Mistral, and other MLC-LLM-compatible models.
-- Domain presets: code, math, and custom fine-tune workflows.
-- Fine-tuning helpers: starter datasets, `train_lora.py`, and Colab notebooks.
-- Build automation: GitHub Actions, local script, and Colab build paths.
-- Demo support: a ready `demo/index.html` for browser testing.
+1. Choose a compatible small base model.
+2. Optionally fine-tune it with domain data using LoRA.
+3. Compile and quantize the model with MLC-LLM.
+4. Host the `.wasm` and quantized weights.
+5. Load the model in a browser via WebLLM.
 
-## Building domain-specific webSLM
+### Supported build paths
 
-### Build methods
+- GitHub Actions: automated pipeline for build and deployment.
+- Colab: cloud-friendly fine-tuning and compilation notebooks.
+- Local machine: run the pipeline from source with `build.sh`.
 
-- GitHub Actions: automated CI pipeline for model compilation.
-- Colab: cloud-based fine-tuning and build notebooks.
-- Local: run the scripts on your own machine.
+### What the repo includes
 
-### Typical build flow
+- `finetune/` — LoRA fine-tuning workflow, starter datasets, and training scripts.
+- `colab/` — interactive notebooks for training and building.
+- `demo/index.html` — ready-to-use browser demo.
+- `build.sh` — local build script.
+- `merge_lora.py` — merges LoRA adapters before compilation.
+- `normalize_config.py` — fixes Hugging Face config issues for MLC-LLM v0.19.0.
+- `model-card/` — template and publishing guidance for Hugging Face.
+- `.github/workflows/build-slm.yml` — CI pipeline for building custom models.
 
-- Choose a small base model from Hugging Face.
-- Prepare domain-specific training data.
-- Fine-tune with LoRA using the repository's scripts or Colab notebook.
-- Run the MLC-LLM compile pipeline to produce `.wasm` and quantized weights.
-- Host the output files on Hugging Face, GitHub Releases, or another static host.
-- Configure `WebLLM` to load your model in the browser.
+## Domain-specific fine-tuning
 
-### Output artifacts
+The repository includes starter domain samples in `finetune/data/` for medical, legal, and insurance.
 
-- Quantized weight shards
-- A `.wasm` model runtime library
-- Browser-ready config for WebLLM
-- A demo page that loads the model without a backend
+### Important note on training data
 
-## Why this matters
+- The included samples are illustrative, not sufficient for production.
+- Each starter dataset contains only a small number of examples.
+- For real domain quality, replace them with hundreds or thousands of high-quality examples.
+- Consistent prompts and assistant behavior are critical for reliable output.
 
-### Benefits of webSLM
+### Why fine-tuning helps
 
-- Domain specialization: fine-tuning tailors models to specific verticals.
-- Browser execution: inference happens on-device with full privacy.
-- Minimal infrastructure: no inference server is required.
-- Reproducible automation: builds can run in GitHub Actions or Colab.
+- Small models adapt efficiently to domain-specific language and style.
+- LoRA makes fine-tuning affordable and fast.
+- The resulting model can answer specialized questions more accurately than a generic SLM.
 
-### Practical use cases
+## Practical considerations
 
-- Privacy-safe medical or legal assistants
-- Internal knowledge bots and policy tools
-- Offline-capable customer service agents
-- Browser-based coding and math helpers
+### Strengths of webSLM
 
-## Practical limitations
+- Clean separation between training and compilation.
+- Built for browser deployment, not just server inference.
+- Automates complex MLC-LLM build steps.
+- Provides a strong developer experience with notebooks, scripts, and demos.
 
-- Included starter datasets are illustrative, not production-ready.
-- Real domain quality requires hundreds or thousands of examples.
-- Sensitive domains need human review and validation.
-- Browser-friendly SLMs are the best trade-off for privacy and low-latency use cases.
+### Limitations
+
+- Browser models should remain small; 7B+ is generally too large.
+- The repo pins MLC-LLM v0.19.0 for stability.
+- Data quality matters more than quantity for sensitive domains.
+- Some models require specific quant formats such as `q4f32_1` to avoid NaNs.
 
 ## Conclusion
 
-webSLM is a focused, developer-friendly toolkit for creating browser-deployable domain models.
+webSLM is a practical, model-agnostic toolkit for creating domain-specific browser AI with WebLLM.
 
-It combines:
+It bridges:
 
-- small, efficient SLMs,
+- small SLM architectures,
 - quantized browser-ready assets,
-- WebLLM runtime integration,
-- automated builds via GitHub Actions and Colab.
+- WebLLM runtime execution,
+- and automated build workflows via GitHub Actions and Colab.
 
-The result is a workflow that lets you build custom browser AI the same way you use WebLLM, but with your own domain-specific model and data.
+This makes it possible to build custom browser agents that are private, offline-capable, and tailored to real-world domains.
